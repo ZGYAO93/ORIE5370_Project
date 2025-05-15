@@ -9,6 +9,10 @@ import numpy as np
 import pickle
 import matplotlib.pyplot as plt
 plt.close("all")
+plt.rcParams['text.usetex'] = False
+
+import matplotlib
+matplotlib.use('Agg')
 
 # Make the code device-agnostic
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -194,73 +198,73 @@ else:
         pickle.dump(dr_net, outp, pickle.HIGHEST_PROTOCOL)
     print('dr_net run complete')
 
-    # Exp 2: DR predict-then-optimize system
-    dr_po_net = bm.pred_then_opt(n_x, n_y, n_obs, set_seed=set_seed, prisk=prisk,
-                                opt_layer=dr_layer).double()
-    dr_po_net.net_roll_test(X, Y)
-    with open(cache_path+'dr_po_net.pkl', 'wb') as outp:
-        pickle.dump(dr_po_net, outp, pickle.HIGHEST_PROTOCOL)
-    print('dr_po_net run complete')
+    # # Exp 2: DR predict-then-optimize system
+    # dr_po_net = bm.pred_then_opt(n_x, n_y, n_obs, set_seed=set_seed, prisk=prisk,
+    #                             opt_layer=dr_layer).double()
+    # dr_po_net.net_roll_test(X, Y)
+    # with open(cache_path+'dr_po_net.pkl', 'wb') as outp:
+    #     pickle.dump(dr_po_net, outp, pickle.HIGHEST_PROTOCOL)
+    # print('dr_po_net run complete')
 
-    # Exp 2: DR E2E (fixed theta and gamma, learn delta)
-    dr_net_learn_delta = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
-                        train_pred=False, train_gamma=False, train_delta=True,
-                        set_seed=set_seed, opt_layer=dr_layer, perf_loss=perf_loss, 
-                        cache_path=cache_path, perf_period=perf_period,
-                        pred_loss_factor=pred_loss_factor).double()
-    dr_net_learn_delta.net_cv(X, Y, lr_list, epoch_list)
-    dr_net_learn_delta.net_roll_test(X, Y)
-    with open(cache_path+'dr_net_learn_delta.pkl', 'wb') as outp:
-        pickle.dump(dr_net_learn_delta, outp, pickle.HIGHEST_PROTOCOL)
-    print('dr_net_learn_delta run complete')
+    # # Exp 2: DR E2E (fixed theta and gamma, learn delta)
+    # dr_net_learn_delta = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
+    #                     train_pred=False, train_gamma=False, train_delta=True,
+    #                     set_seed=set_seed, opt_layer=dr_layer, perf_loss=perf_loss, 
+    #                     cache_path=cache_path, perf_period=perf_period,
+    #                     pred_loss_factor=pred_loss_factor).double()
+    # dr_net_learn_delta.net_cv(X, Y, lr_list, epoch_list)
+    # dr_net_learn_delta.net_roll_test(X, Y)
+    # with open(cache_path+'dr_net_learn_delta.pkl', 'wb') as outp:
+    #     pickle.dump(dr_net_learn_delta, outp, pickle.HIGHEST_PROTOCOL)
+    # print('dr_net_learn_delta run complete')
 
-    # Exp 3: Nominal E2E (fixed theta, learn gamma)
-    nom_net_learn_gamma = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
-                        train_pred=False, train_gamma=True, train_delta=False,
-                        set_seed=set_seed, opt_layer='nominal', perf_loss=perf_loss, 
-                        cache_path=cache_path, perf_period=perf_period,
-                        pred_loss_factor=pred_loss_factor).double()
-    nom_net_learn_gamma.net_cv(X, Y, lr_list, epoch_list)
-    nom_net_learn_gamma.net_roll_test(X, Y)
-    with open(cache_path+'nom_net_learn_gamma.pkl', 'wb') as outp:
-        pickle.dump(nom_net_learn_gamma, outp, pickle.HIGHEST_PROTOCOL)
-    print('nom_net_learn_gamma run complete')
+    # # Exp 3: Nominal E2E (fixed theta, learn gamma)
+    # nom_net_learn_gamma = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
+    #                     train_pred=False, train_gamma=True, train_delta=False,
+    #                     set_seed=set_seed, opt_layer='nominal', perf_loss=perf_loss, 
+    #                     cache_path=cache_path, perf_period=perf_period,
+    #                     pred_loss_factor=pred_loss_factor).double()
+    # nom_net_learn_gamma.net_cv(X, Y, lr_list, epoch_list)
+    # nom_net_learn_gamma.net_roll_test(X, Y)
+    # with open(cache_path+'nom_net_learn_gamma.pkl', 'wb') as outp:
+    #     pickle.dump(nom_net_learn_gamma, outp, pickle.HIGHEST_PROTOCOL)
+    # print('nom_net_learn_gamma run complete')
 
-    # Exp 3: DR E2E (fixed theta, learn gamma, fixed delta)
-    dr_net_learn_gamma = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
-                        train_pred=False, train_gamma=True, train_delta=False,
-                        set_seed=set_seed, opt_layer=dr_layer, perf_loss=perf_loss, 
-                        cache_path=cache_path, perf_period=perf_period,
-                        pred_loss_factor=pred_loss_factor).double()
-    dr_net_learn_gamma.net_cv(X, Y, lr_list, epoch_list)
-    dr_net_learn_gamma.net_roll_test(X, Y)
-    with open(cache_path+'dr_net_learn_gamma.pkl', 'wb') as outp:
-        pickle.dump(dr_net_learn_gamma, outp, pickle.HIGHEST_PROTOCOL)
-    print('dr_net_learn_gamma run complete')
+    # # Exp 3: DR E2E (fixed theta, learn gamma, fixed delta)
+    # dr_net_learn_gamma = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
+    #                     train_pred=False, train_gamma=True, train_delta=False,
+    #                     set_seed=set_seed, opt_layer=dr_layer, perf_loss=perf_loss, 
+    #                     cache_path=cache_path, perf_period=perf_period,
+    #                     pred_loss_factor=pred_loss_factor).double()
+    # dr_net_learn_gamma.net_cv(X, Y, lr_list, epoch_list)
+    # dr_net_learn_gamma.net_roll_test(X, Y)
+    # with open(cache_path+'dr_net_learn_gamma.pkl', 'wb') as outp:
+    #     pickle.dump(dr_net_learn_gamma, outp, pickle.HIGHEST_PROTOCOL)
+    # print('dr_net_learn_gamma run complete')
 
-    # Exp 4: Nominal E2E (learn theta, fixed gamma)
-    nom_net_learn_theta = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
-                        train_pred=True, train_gamma=False, train_delta=False,
-                        set_seed=set_seed, opt_layer='nominal', perf_loss=perf_loss, 
-                        cache_path=cache_path, perf_period=perf_period,
-                        pred_loss_factor=pred_loss_factor).double()
-    nom_net_learn_theta.net_cv(X, Y, lr_list, epoch_list)
-    nom_net_learn_theta.net_roll_test(X, Y)
-    with open(cache_path+'nom_net_learn_theta.pkl', 'wb') as outp:
-        pickle.dump(nom_net_learn_theta, outp, pickle.HIGHEST_PROTOCOL)
-    print('nom_net_learn_theta run complete')
+    # # Exp 4: Nominal E2E (learn theta, fixed gamma)
+    # nom_net_learn_theta = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
+    #                     train_pred=True, train_gamma=False, train_delta=False,
+    #                     set_seed=set_seed, opt_layer='nominal', perf_loss=perf_loss, 
+    #                     cache_path=cache_path, perf_period=perf_period,
+    #                     pred_loss_factor=pred_loss_factor).double()
+    # nom_net_learn_theta.net_cv(X, Y, lr_list, epoch_list)
+    # nom_net_learn_theta.net_roll_test(X, Y)
+    # with open(cache_path+'nom_net_learn_theta.pkl', 'wb') as outp:
+    #     pickle.dump(nom_net_learn_theta, outp, pickle.HIGHEST_PROTOCOL)
+    # print('nom_net_learn_theta run complete')
 
-    # Exp 4: DR E2E (learn theta, fixed gamma and delta)
-    dr_net_learn_theta = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
-                        train_pred=True, train_gamma=False, train_delta=False,
-                        set_seed=set_seed, opt_layer=dr_layer, perf_loss=perf_loss, 
-                        cache_path=cache_path, perf_period=perf_period,
-                        pred_loss_factor=pred_loss_factor).double()
-    dr_net_learn_theta.net_cv(X, Y, lr_list, epoch_list)
-    dr_net_learn_theta.net_roll_test(X, Y)
-    with open(cache_path+'dr_net_learn_theta.pkl', 'wb') as outp:
-        pickle.dump(dr_net_learn_theta, outp, pickle.HIGHEST_PROTOCOL)
-    print('dr_net_learn_theta run complete')
+    # # Exp 4: DR E2E (learn theta, fixed gamma and delta)
+    # dr_net_learn_theta = e2e.e2e_net(n_x, n_y, n_obs, prisk=prisk,
+    #                     train_pred=True, train_gamma=False, train_delta=False,
+    #                     set_seed=set_seed, opt_layer=dr_layer, perf_loss=perf_loss, 
+    #                     cache_path=cache_path, perf_period=perf_period,
+    #                     pred_loss_factor=pred_loss_factor).double()
+    # dr_net_learn_theta.net_cv(X, Y, lr_list, epoch_list)
+    # dr_net_learn_theta.net_roll_test(X, Y)
+    # with open(cache_path+'dr_net_learn_theta.pkl', 'wb') as outp:
+    #     pickle.dump(dr_net_learn_theta, outp, pickle.HIGHEST_PROTOCOL)
+    # print('dr_net_learn_theta run complete')
 
 ####################################################################################################
 # Merge objects with their extended-epoch counterparts
@@ -312,10 +316,10 @@ portfolio_colors = ["dimgray",
                     "goldenrod", 
                     "dodgerblue", 
                     "salmon"]
-pf.wealth_plot(portfolios, portfolio_names, portfolio_colors, 
-                path=cache_path+"plots/wealth_exp1.pdf")
-pf.sr_bar(portfolios, portfolio_names, portfolio_colors, 
-                path=cache_path+"plots/sr_bar_exp1.pdf")
+port_realized_r = pf.wealth_plot(portfolios, portfolio_names, portfolio_colors, 
+                path=cache_path+"plots/wealth_exp1.png")
+port_sharp_r = pf.sr_bar(portfolios, portfolio_names, portfolio_colors, 
+                path=cache_path+"plots/sr_bar_exp1.png")
 
 # List of initial parameters
 exp1_param_dict = dict({'po_net':po_net.gamma.item(),
@@ -326,10 +330,10 @@ exp1_param_dict = dict({'po_net':po_net.gamma.item(),
 exp1_trained_vals = pd.DataFrame(zip([nom_net.gamma_init]+nom_net.gamma_trained, 
                                     [dr_net.gamma_init]+dr_net.gamma_trained, 
                                     [dr_net.delta_init]+dr_net.delta_trained), 
-                                    columns=[r'Nom. $\gamma$', 
-                                             r'DR $\gamma$', 
-                                             r'DR $\delta$'])
-
+                                    columns=[r'Nom. gamma', 
+                                             r'DR gamma', 
+                                             r'DR delta'])
+"""
 #---------------------------------------------------------------------------------------------------
 # Experiment 2: Learn delta
 #---------------------------------------------------------------------------------------------------
@@ -671,4 +675,5 @@ exp5_param_dict = dict({'nom_net_linear':nom_net_linear.gamma_init,
                     'dr_net_2layer':[dr_net_2layer.gamma_init, dr_net_2layer.delta_init],
                     'nom_net_3layer':nom_net_3layer.gamma_init,
                     'dr_net_3layer':[dr_net_3layer.gamma_init, dr_net_3layer.delta_init]})
-                    
+
+"""

@@ -10,9 +10,13 @@ from scipy.stats.mstats import gmean
 
 # Matplotlib parameters
 plt.close("all")
-plt.rcParams["font.family"] ="serif"
+#plt.rcParams["font.family"] ="serif"
 plt.rcParams['axes.xmargin'] = 0
-plt.rcParams['text.usetex'] = True
+#plt.rcParams['text.usetex'] = True
+
+import matplotlib.pyplot as plt
+plt.rcParams['text.usetex'] = False
+plt.rcParams["font.family"] ='DejaVu Sans'
 
 ####################################################################################################
 # Ploting functions
@@ -34,9 +38,11 @@ def wealth_plot(portfolio_list, names, colors, nplots=1, path=None):
     Output
     Wealth evolution figure
     """
+    print(names)
     n = len(portfolio_list)
     plot_df = pd.concat([portfolio_list[i].rets.tri.rename(names[i])*100 for i in 
                         range(n)], axis=1)
+    
     s = pd.DataFrame([100*np.ones(n)], columns=names)
     if isinstance(plot_df.index, pd.DatetimeIndex):
         s.index = [plot_df.index[0] - pd.Timedelta(days=7)]
@@ -75,9 +81,10 @@ def wealth_plot(portfolio_list, names, colors, nplots=1, path=None):
             ax[j].tick_params(axis='x', labelrotation = 30)
 
     if path is not None:
-        fig.savefig(path, bbox_inches='tight')
-        fig.savefig(path[0:-3]+'ps', bbox_inches='tight', format='ps')
-
+        fig.savefig(path, bbox_inches='tight')#
+        # fig.savefig(path[0:-3] + 'png', bbox_inches='tight')
+        # fig.savefig(path[0:-3]+'ps', bbox_inches='tight', format='ps')
+    return plot_df
 #---------------------------------------------------------------------------------------------------
 # sr_plot function
 #---------------------------------------------------------------------------------------------------
@@ -111,11 +118,11 @@ def sr_plot(portfolio_list, names, colors, path=None):
     plt.ylabel("2-yr SR", fontsize=14)
     plt.xticks(fontsize=14)
     plt.yticks(fontsize=14)
-
+    
     if path is not None:
-        fig.savefig(path, bbox_inches='tight')
-        fig.savefig(path[0:-3]+'eps', bbox_inches='tight', format='eps')
-
+      fig.savefig(path, bbox_inches='tight')
+      #fig.savefig(path[0:-3]+'eps', bbox_inches='tight', format='eps')
+    return plot_df
 #---------------------------------------------------------------------------------------------------
 # sr_plot function
 #---------------------------------------------------------------------------------------------------
@@ -159,7 +166,7 @@ def sr_bar(portfolio_list, names, colors, path=None):
 
     if path is not None:
         fig.savefig(path, bbox_inches='tight')
-        fig.savefig(path[0:-3]+'eps', bbox_inches='tight', format='eps')
+        #fig.savefig(path[0:-3]+'eps', bbox_inches='tight', format='eps')
 
 #---------------------------------------------------------------------------------------------------
 # learn_plot function
@@ -193,9 +200,9 @@ def learn_plot(trained_vals, colors, marker, delta_mark, path=None):
     ax.grid(b="on",linestyle=":",linewidth=0.8)
 
     ax.set_xlabel(r'Training period', fontsize=14)
-    ax.set_ylabel(r'$\gamma$', fontsize=14)
+    ax.set_ylabel(r'gamma', fontsize=14)
     if i < delta_mark:
-        ax2.set_ylabel(r'$\delta$', fontsize=14)
+        ax2.set_ylabel(r'delta', fontsize=14)
     
     plt.xticks(fontsize=14)
     plt.yticks(fontsize=14)

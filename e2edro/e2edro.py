@@ -69,6 +69,7 @@ def base_mod(n_y, n_obs, prisk):
 
     return CvxpyLayer(problem, parameters=[y_hat], variables=[z])
 
+
 #---------------------------------------------------------------------------------------------------
 # nominal: CvxpyLayer that declares the portfolio optimization problem
 #---------------------------------------------------------------------------------------------------
@@ -264,13 +265,385 @@ def hellinger(n_y, n_obs, prisk):
     return CvxpyLayer(problem, parameters=[ep, y_hat, gamma, delta], variables=[z])
 
 ####################################################################################################
+# All price prediction opt fuctions(Guangyu)
+####################################################################################################
+
+#---------------------------------------------------------------------------------------------------
+# Markowitz and variants: CvxpyLayer that declares the portfolio optimization problem
+#---------------------------------------------------------------------------------------------------
+
+def markowitz_mod(n_y, n_obs, prisk, variant="standard", **kwargs):
+    """Markowitz optimization problem with multiple variants as a CvxpyLayer object
+    
+    Inputs:
+    -------
+    n_y: number of assets
+    n_obs: Number of scenarios in the dataset
+    variant: String indicating which variant to use:
+        - "standard": Standard mean-variance optimization 
+        - "min_variance": Minimum variance portfolio
+        - "max_sharpe": Maximum Sharpe ratio portfolio
+        - "risk_parity": Equal risk contribution portfolio
+        - "target_return": Efficient frontier portfolio with target return
+    
+    Optional Parameters (depending on variant):
+    ------------------------------------------
+    risk_aversion: Float, trade-off parameter for standard variant
+    rf_rate: Float, risk-free rate for max_sharpe variant
+    target_ret: Float, target return for target_return variant
+    
+    Returns:
+    --------
+    CvxpyLayer object configured for the selected portfolio optimization variant
+    """
+    # Common variables for all variants
+    z = cp.Variable((n_y, 1), nonneg=True)
+    
+    # Common constraints for all variants
+    constraints = [cp.sum(z) == 1]  # Budget constraint
+    
+    # Implement different variants
+    if variant == "standard":
+        # Standard mean-variance optimization
+        risk_aversion = kwargs.get("risk_aversion", 1.0)
+        
+        # Variables
+        z = cp.Variable((n_y, 1), nonneg=True)
+        
+        # Parameters
+        y_hat = cp.Parameter(n_y)  # Expected returns
+        # Instead of using cov_matrix directly, we'll use its square root
+        cov_sqrt = cp.Parameter((n_y, n_y))  # Square root of covariance matrix
+        
+        # Constraints
+        constraints = [cp.sum(z) == 1]  # Budget constraint
+        
+        # Objective: maximize return - risk_aversion * variance
+        # The key transformation: replace cp.quad_form(z, cov_matrix) with cp.sum_squares(cov_sqrt @ z)
+        # This is mathematically equivalent but DPP-compliant
+        objective = cp.Minimize(-y_hat @ z + risk_aversion * cp.sum_squares(cov_sqrt @ z))
+        
+        # Create problem
+        problem = cp.Problem(objective, constraints)
+        
+        # Create the layer
+        layer = CvxpyLayer(problem, parameters=[y_hat, cov_sqrt], variables=[z])
+        
+        # Wrapper class to handle the covariance decomposition
+        class StandardMarkowitzLayer(torch.nn.Module):
+            def __init__(self, cvxpy_layer):
+                super().__init__()
+                self.layer = cvxpy_layer
+                
+            def forward(self, expected_returns, cov_matrix):
+                # Convert Parameter objects to Tensors if needed
+                if isinstance(expected_returns, torch.nn.Parameter):
+                    expected_returns = expected_returns.data
+                if isinstance(cov_matrix, torch.nn.Parameter):
+                    cov_matrix = cov_matrix.data
+                
+                # Compute the square root of the covariance matrix
+                try:
+                    # Try Cholesky decomposition first (more efficient)
+                    L = torch.linalg.cholesky(cov_matrix)
+                except:
+                    # Fall back to eigendecomposition if Cholesky fails
+                    # (e.g., if matrix is not positive definite)
+                    eigenvalues, eigenvectors = torch.linalg.eigh(cov_matrix)
+                    # Ensure positivity of eigenvalues for numerical stability
+                    eigenvalues = torch.clamp(eigenvalues, min=1e-6)
+                    # Compute the square root matrix
+                    L = eigenvectors @ torch.diag(torch.sqrt(eigenvalues)) @ eigenvectors.t()
+                
+                # Solve the optimization problem with expected returns and cov_sqrt
+                weights = self.layer(expected_returns, L)[0]
+                return weights
+        
+        return StandardMarkowitzLayer(layer)
+    
+    elif variant == "min_variance":
+        # Minimum variance portfolio
+        
+        # Parameters
+        cov_matrix = cp.Parameter((n_y, n_y), PSD=True)
+        
+        # Objective: minimize portfolio variance
+        objective = cp.Minimize(cp.quad_form(z, cov_matrix))
+        
+        # Create problem
+        problem = cp.Problem(objective, constraints)
+        return CvxpyLayer(problem, parameters=[cov_matrix], variables=[z])
+    
+    elif variant == "max_sharpe":
+        # Maximum Sharpe ratio portfolio
+        # Note: This is a reformulation using a change of variables
+        rf_rate = kwargs.get("rf_rate", 0.0)
+        
+        # Parameters
+        y_hat = cp.Parameter(n_y)
+        cov_matrix = cp.Parameter((n_y, n_y), PSD=True)
+        
+        # We use a change of variables approach to handle the non-convex Sharpe ratio
+        # Let y = z/k where k is a scalar. Then we maximize (y_hat @ y - rf_rate * sum(y))
+        # subject to quad_form(y, cov_matrix) = 1 and y >= 0
+        y = cp.Variable((n_y, 1), nonneg=True)
+        
+        # Objective: maximize excess return with fixed risk
+        objective = cp.Maximize(y_hat @ y - rf_rate * cp.sum(y))
+        
+        # Constraints: unit risk and non-negative weights
+        max_sharpe_constraints = [cp.quad_form(y, cov_matrix) == 1]
+        
+        # Create problem 
+        problem = cp.Problem(objective, max_sharpe_constraints)
+        
+        # We'll need to normalize the output to get portfolio weights
+        class MaxSharpeLayer(torch.nn.Module):
+            def __init__(self, cvxpy_layer):
+                super().__init__()
+                self.layer = cvxpy_layer
+                
+            def forward(self, y_hat, cov_matrix):
+                # Solve the optimization problem
+                y = self.layer(y_hat, cov_matrix)[0]
+                
+                # Normalize to get weights that sum to 1
+                z = y / torch.sum(y)
+                return z
+                
+        cvxpy_layer = CvxpyLayer(problem, parameters=[y_hat, cov_matrix], variables=[y])
+        return MaxSharpeLayer(cvxpy_layer)
+    
+    elif variant == "target_return":
+        # Efficient frontier portfolio with target return
+        target_ret = kwargs.get("target_ret", 0.0)
+        
+        # Parameters
+        y_hat = cp.Parameter(n_y)
+        cov_matrix = cp.Parameter((n_y, n_y), PSD=True)
+        target_return = cp.Parameter()
+        
+        # Objective: minimize variance for a given target return
+        objective = cp.Minimize(cp.quad_form(z, cov_matrix))
+        
+        # Additional constraint: achieve target return
+        target_return_constraints = constraints + [y_hat @ z >= target_return]
+        
+        # Create problem
+        problem = cp.Problem(objective, target_return_constraints)
+        return CvxpyLayer(problem, parameters=[cov_matrix, y_hat, target_return], variables=[z])
+    
+    else:
+        raise ValueError(f"Unknown variant: {variant}. Available variants: 'standard', 'min_variance', 'max_sharpe', 'risk_parity', 'target_return'")
+
+#---------------------------------------------------------------------------------------------------
+# CVaR_mod and variants
+#---------------------------------------------------------------------------------------------------
+
+def cvar_portfolio_mod(n_y, n_obs, prisk, variant="min_cvar", **kwargs):
+    """
+    CVaR-based portfolio optimization variants as a CvxpyLayer object
+    
+    Inputs:
+    -------
+    n_y: number of assets
+    n_obs: Number of scenarios in the dataset
+    variant: String indicating which variant to use:
+        - "min_cvar": Minimize CVaR (most conservative)
+        - "mean_cvar": Balance between return and CVaR (like mean-variance)
+        - "cvar_constrained": Maximize return subject to CVaR constraint
+        - "cvar_ratio": Maximize return-to-CVaR ratio (like Sharpe ratio)
+    
+    Optional Parameters:
+    ------------------
+    alpha: Confidence level for CVaR (default: 0.95)
+    risk_aversion: Trade-off parameter for mean_cvar variant
+    cvar_limit: Upper bound on CVaR for constrained variant
+    
+    Returns:
+    --------
+    CvxpyLayer object configured for the selected CVaR optimization variant
+    """
+    # Common variables for all variants
+    z = cp.Variable((n_y, 1), nonneg=True)  # Portfolio weights
+    
+    # Common constraints for all variants
+    constraints = [cp.sum(z) == 1]  # Budget constraint
+    
+    # Extract parameters
+    alpha = kwargs.get("alpha", 0.95)  # Default 95% confidence level
+    
+    # Variables for CVaR calculation
+    # For sample-based CVaR computation, we need:
+    # Sample returns matrix
+    returns = cp.Parameter((n_obs, n_y)) 
+    # Value-at-Risk variable
+    var = cp.Variable(1)
+    # Auxiliary variables for CVaR calculation
+    aux_vars = cp.Variable(n_obs)
+    
+    # CVaR calculation constraints
+    cvar_constraints = constraints + [
+        aux_vars >= 0,
+        aux_vars >= -returns @ z - var
+    ]
+    
+    # Calculate CVaR: VaR + 1/((1-alpha)*n_obs) * sum of auxiliary variables
+    # This is based on the Rockafellar & Uryasev formulation
+    cvar_expr = var + (1/((1-alpha)*n_obs)) * cp.sum(aux_vars)
+    
+    # Implement different variants
+    if variant == "min_cvar":
+        # Simple minimum CVaR portfolio
+        objective = cp.Minimize(cvar_expr)
+        problem = cp.Problem(objective, cvar_constraints)
+        return CvxpyLayer(problem, parameters=[returns], variables=[z])
+    
+    elif variant == "mean_cvar":
+        # Mean-CVaR optimization (similar to mean-variance but with CVaR)
+        risk_aversion = kwargs.get("risk_aversion", 1.0)
+        # Expected returns vector
+        expected_returns = cp.Parameter(n_y) 
+        
+        # Objective: maximize expected return - risk_aversion * CVaR
+        objective = cp.Minimize(-expected_returns @ z + risk_aversion * cvar_expr)
+        problem = cp.Problem(objective, cvar_constraints)
+        return CvxpyLayer(problem, parameters=[returns, expected_returns], variables=[z])
+    
+    elif variant == "cvar_constrained":
+        # Return maximization subject to CVaR constraint
+        # Default 10% CVaR limit
+        cvar_limit = kwargs.get("cvar_limit", 0.1) 
+         # Expected returns vector 
+        expected_returns = cp.Parameter(n_y) 
+        # CVaR upper bound
+        cvar_bound = cp.Parameter(1, nonneg=True)  
+        
+        # Add CVaR constraint
+        cvar_bound_constraints = cvar_constraints + [cvar_expr <= cvar_bound]
+        
+        # Objective: maximize expected return
+        objective = cp.Maximize(expected_returns @ z)
+        problem = cp.Problem(objective, cvar_bound_constraints)
+        return CvxpyLayer(problem, parameters=[returns, expected_returns, cvar_bound], variables=[z])
+    
+    elif variant == "cvar_ratio":
+        # Maximize return-to-CVaR ratio (similar to Sharpe ratio)
+        # This requires a non-convex formulation, so we use a change of variables approach
+        
+        # This is more complex to implement with CVaR than with standard deviation
+        # use a fractional programming approach
+        
+        class CVaRRatioLayer(torch.nn.Module):
+            def __init__(self, n_y, n_obs, alpha=0.95, max_iter=20):
+                super().__init__()
+                self.n_y = n_y
+                self.n_obs = n_obs
+                self.alpha = alpha
+                self.max_iter = max_iter
+                
+                # Create a mean-CVaR layer that we'll use iteratively
+                self.mean_cvar_layer = cvar_portfolio_mod(
+                    n_y, n_obs, variant="mean_cvar", alpha=alpha)
+            
+            def forward(self, returns, expected_returns):
+                # Initial guess for lambda (risk aversion parameter)
+                lambda_t = 1.0
+                z_t = torch.ones(self.n_y, 1, device=returns.device) / self.n_y
+                
+                # Bisection search to find optimal lambda for CVaR ratio maximization
+                for _ in range(self.max_iter):
+                    # Solve mean-CVaR problem with current lambda
+                    z_new = self.mean_cvar_layer(returns, expected_returns * lambda_t)[0]
+                    
+                    # Calculate expected return and CVaR for new weights
+                    expected_ret = torch.matmul(expected_returns.view(1, -1), z_new)
+                    
+                    # Compute CVaR (this is simplified - in practice you'd use the aux vars)
+                    portfolio_returns = torch.matmul(returns, z_new)
+                    sorted_returns, _ = torch.sort(portfolio_returns, dim=0)
+                    var_index = int(self.n_obs * (1 - self.alpha))
+                    var_t = -sorted_returns[var_index]
+                    cvar_t = -torch.mean(sorted_returns[:var_index+1])
+                    
+                    # Calculate ratio
+                    ratio = expected_ret / cvar_t
+                    
+                    # Update lambda based on bisection
+                    if torch.abs(expected_ret - lambda_t * cvar_t) < 1e-6:
+                        break
+                    
+                    lambda_t = expected_ret / cvar_t
+                    z_t = z_new
+                
+                return z_t
+        
+        return CVaRRatioLayer(n_y, n_obs, alpha=alpha)
+    
+    else:
+        raise ValueError(f"Unknown variant: {variant}. Available variants: 'min_cvar', 'mean_cvar', 'cvar_constrained', 'cvar_ratio'")
+
+####################################################################################################
+# All risk related opt fuctions(Jiayi)
+####################################################################################################
+def pred_sigma(y_hat,n_asset):
+    """
+    Convert the lower triangle elements into a symmetric matrix
+    We define/assume the output of the pred_layer represents the covariance between assets
+    
+    INPUTS:
+    -------
+    y_hat -> torch.Tensor: here y_hat represents the lower triangle part of the covariance matrix ([1,(n+1)n/2])
+    n_asset -> int: number of assets
+    
+    OUTPUTS:
+    --------
+    sigma: symmetric covariance matrix (n,n)
+    """
+    n_data = y_hat.size(0)
+    L = torch.zeros((n_data, n_asset, n_asset))  # just for one data
+
+    tril_indices = torch.tril_indices(row=n_asset, col=n_asset)
+    L[:,tril_indices[0], tril_indices[1]] = y_hat
+    # make the diagonal positive
+    L[:,range(n_asset), range(n_asset)] = torch.nn.functional.softplus(L[:,range(n_asset), range(n_asset)])
+    sigma = torch.bmm(L, L.transpose(1, 2)) + 1e-3 * torch.eye(n_asset)
+    return sigma
+
+# Risk budget optimization layer
+def risk_budget(n_y):
+    y = cp.Variable((n_y, 1), nonneg=True)  # allocation
+    b = cp.Parameter((n_y, 1), nonneg=True)  # predicted risk budget
+    c = cp.Parameter()
+    Sigma = cp.Parameter((n_y, n_y), PSD=True)  # covariance matrix
+
+    objective = cp.Minimize(cp.sum_squares(Sigma @ y))  # quadratic objective
+    constraints = [b.T @ cp.log(y) >= c]  # DPP-compliant constraint
+    problem = cp.Problem(objective, constraints)
+
+    return CvxpyLayer(problem, parameters=[Sigma, b, c], variables=[y])
+
+def risk_budget_mod(n_y):
+    y = cp.Variable((n_y, 1), nonneg=True)  # allocation
+    b = cp.Parameter((n_y, 1), nonneg=True)  # predicted risk budget
+    c = cp.Parameter()
+    Sigma = cp.Parameter((n_y, n_y), PSD=True)  # covariance matrix
+    gamma = cp.Parameter(nonneg=True)  
+    objective = cp.Minimize(cp.sum_squares(Sigma @ y) - gamma * cp.sum(cp.entr(y)))
+
+    #objective = cp.Minimize(cp.sum_squares(Sigma @ y))  # quadratic objective
+    constraints = [b.T @ cp.log(y) >= c]  # DPP-compliant constraint
+    problem = cp.Problem(objective, constraints)
+
+    return CvxpyLayer(problem, parameters=[Sigma, b, c, gamma], variables=[y])
+####################################################################################################
 # E2E neural network module
 ####################################################################################################
 class e2e_net(nn.Module):
     """End-to-end DRO learning neural net module.
     """
     def __init__(self, n_x, n_y, n_obs, opt_layer='nominal', prisk='p_var', perf_loss='sharpe_loss',
-                pred_model='linear', pred_loss_factor=0.5, perf_period=13, train_pred=True, train_gamma=True, train_delta=True, set_seed=None, cache_path='./cache/'):
+                pred_model='linear', pred_loss_factor=0.5, perf_period=13, train_pred=True, train_gamma=True, train_delta=True, set_seed=None, cache_path='./cache/',variant="standard"):
         """End-to-end learning neural net module
 
         This NN module implements a linear prediction layer 'pred_layer' and a DRO layer 
@@ -330,6 +703,30 @@ class e2e_net(nn.Module):
         elif opt_layer == 'base_mod':
             self.gamma.requires_grad = False
             self.model_type = 'base_mod' 
+        elif opt_layer == 'markowitz_mod':
+            self.gamma.requires_grad = False
+            self.model_type = 'markowitz_mod' 
+
+        elif opt_layer == 'risk_budget' or opt_layer == 'risk_budget_mod':
+            self.model_type = opt_layer
+            self.gamma.requires_grad = False
+            self.n_y = n_y  # number of output from neural network should align with number of asset (budget)
+            self.pred_layer = nn.Sequential(
+                nn.Linear(n_x, 32),
+                nn.LeakyReLU(negative_slope=0.1),
+                nn.Linear(32, self.n_y),
+                nn.Softmax(dim=-1)  # risk budget should sum up to 1
+            )
+        elif opt_layer == 'min_variance' or opt_layer == 'risk_parity':
+            self.model_type = opt_layer
+            self.gamma.requires_grad = False
+            self.n_y = int(n_y*(n_y+1)/2)
+            self.pred_layer = nn.Sequential(
+                nn.Linear(n_x, 32),
+                nn.LeakyReLU(negative_slope=0.1),
+                nn.Linear(32, self.n_y)
+                # no softmax layer
+            )
         else:
             # Register 'delta' (ambiguity sizing parameter) for DR layer
             if opt_layer == 'hellinger':
@@ -368,7 +765,14 @@ class e2e_net(nn.Module):
                       nn.Linear(n_y, n_y))
 
         # LAYER: Optimization model
-        self.opt_layer = eval(opt_layer)(n_y, n_obs, eval('rf.'+prisk))
+        jiayi_models = ['risk_budget','risk_budget_mod','min_variance','risk_parity']
+        if opt_layer == 'markowitz_mod':
+            self.opt_layer = eval(opt_layer)(n_y, n_obs, eval('rf.'+prisk), variant)
+        elif opt_layer in jiayi_models:
+            self.opt_layer = eval(opt_layer)(n_y)
+        else:
+            self.opt_layer = eval(opt_layer)(n_y, n_obs, eval('rf.'+prisk))
+          
         
         # Store reference path to store model data
         self.cache_path = cache_path
@@ -411,13 +815,21 @@ class e2e_net(nn.Module):
         # Calculate residuals and process them
         ep = Y - Y_hat[:-1]
         y_hat = Y_hat[-1]
-
         # Optimization solver arguments (from CVXPY for ECOS/SCS solver)
         solver_args = {'solve_method': 'ECOS', 'max_iters': 120, 'abstol': 1e-7}
-        # solver_args = {'solve_method': 'SCS', 'eps': 1e-7, 'acceleration_lookback': 5,
-        # 'max_iters':20000}
-
+        #solver_args = {'solve_method': 'SCS', 'eps': 1e-7, 'acceleration_lookback': 5,
+        #'max_iters':20000}
+        # solver_args = {
+        #     'solve_method': 'CLARABEL',
+        #     'max_iter': 1000,             # maximum number of iterations
+        #     'tol_feas': 1e-7,             # feasibility tolerance
+        #     'tol_infeas_abs': 1e-7,       # absolute infeasibility tolerance
+        #     'tol_gap_abs': 1e-7           # absolute gap tolerance
+        # }
         # Optimize z per scenario
+        Y_hat_centered = Y_hat - Y_hat.mean(dim=0)
+        cov_matrix = (Y_hat_centered.T @ Y_hat_centered) / (Y_hat.shape[0] - 1)
+        #print(cov_matrix)
         # Determine whether nominal or dro model
         if self.model_type == 'nom':
             z_star, = self.opt_layer(ep, y_hat, self.gamma, solver_args=solver_args)
@@ -425,7 +837,8 @@ class e2e_net(nn.Module):
             z_star, = self.opt_layer(ep, y_hat, self.gamma, self.delta, solver_args=solver_args)
         elif self.model_type == 'base_mod':
             z_star, = self.opt_layer(y_hat, solver_args=solver_args)
-
+        elif self.model_type == 'markowitz_mod':
+            z_star = self.opt_layer(y_hat, cov_matrix)
         return z_star, y_hat
 
     #-----------------------------------------------------------------------------------------------
@@ -536,8 +949,8 @@ class e2e_net(nn.Module):
         Trained model
         """
         results = pc.CrossVal()
-        X_temp = dl.TrainTest(X.train(), X.n_obs, [1, 0])
-        Y_temp = dl.TrainTest(Y.train(), Y.n_obs, [1, 0])
+        X_temp = dl.TrainTest(X.train, X.n_obs, [1, 0])
+        Y_temp = dl.TrainTest(Y.train, Y.n_obs, [1, 0])
         for epochs in epoch_list:
             for lr in lr_list:
                 
